@@ -1,0 +1,91 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id        String   @id @default(cuid())
+  email     String   @unique
+  name      String?
+  password  String
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  alerts    Alert[]
+  accounts  Account[]
+}
+
+model Account {
+  id                String  @id @default(cuid())
+  userId            String
+  type              String
+  provider          String
+  providerAccountId String
+  refresh_token     String? @db.Text
+  access_token      String? @db.Text
+  expires_at        Int?
+  token_type        String?
+  scope             String?
+  id_token          String? @db.Text
+  session_state     String?
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([provider, providerAccountId])
+}
+
+model Tramite {
+  id          String   @id @default(cuid())
+  nombre      String   @unique
+  descripcion String?
+  institucion String   // Registro Civil, SEREMI, etc.
+  url         String
+  activo      Boolean  @default(true)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  alerts      Alert[]
+  slots       Slot[]
+}
+
+model Alert {
+  id        String   @id @default(cuid())
+  userId    String
+  tramiteId String
+  activo    Boolean  @default(true)
+  notificarEmail    Boolean @default(true)
+  notificarWhatsapp Boolean @default(false)
+  notificarPush     Boolean @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  user    User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  tramite Tramite @relation(fields: [tramiteId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, tramiteId])
+}
+
+model Slot {
+  id        String   @id @default(cuid())
+  tramiteId String
+  fecha     DateTime
+  disponible Boolean @default(true)
+  detectadoAt DateTime @default(now())
+
+  tramite Tramite @relation(fields: [tramiteId], references: [id], onDelete: Cascade)
+
+  @@index([tramiteId, fecha])
+}
+
+model NotificationLog {
+  id        String   @id @default(cuid())
+  alertId   String
+  tipo      String   // EMAIL, WHATSAPP, PUSH
+  estado    String   // ENVIADO, FALLIDO
+  mensaje   String?
+  createdAt DateTime @default(now())
+
+  @@index([alertId])
+}
