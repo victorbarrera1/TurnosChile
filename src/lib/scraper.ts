@@ -68,14 +68,32 @@ export async function checkDisponibilidadExtranjero(): Promise<SlotResult> {
       return { disponible: false, mensaje: 'Protección bot activa — no se cargó el formulario' }
     }
 
+    // Read real option values (server sends ' P' with leading space for Pasaporte)
+    const pasaporteValue = await page.evaluate(() => {
+      const sel = document.getElementById('selectTipoDocumento') as HTMLSelectElement | null
+      return Array.from(sel?.options || []).find(o => /pasaporte/i.test(o.text))?.value?.trim() ?? 'P'
+    })
+    const argentinaValue = await page.evaluate(() => {
+      const sel = document.getElementById('selectPais') as HTMLSelectElement | null
+      return Array.from(sel?.options || []).find(o => o.text.includes('ARGENTINA'))?.value ?? '79_32'
+    })
+
     // Fill the form using Playwright native methods to maintain session/CSRF token
-    await page.selectOption('#selectTipoDocumento', '2') // Pasaporte
+    await page.selectOption('#selectTipoDocumento', { value: pasaporteValue })
     await page.fill('#idNumeroDeDocumento', 'PA123456')
     await page.fill('#idNombres', 'Juan')
     await page.fill('#idPrimerApellido', 'Garcia')
     await page.fill('#idSegundoApellido', 'Lopez')
-    await page.fill('#idFechaNacimiento', '01/01/1985')
-    await page.selectOption('#selectPais', 'ARGENTINA')
+    // Date field is readonly (bootstrap-datepicker) — must set via JS
+    await page.evaluate(() => {
+      const input = document.getElementById('idFechaNacimiento') as HTMLInputElement | null
+      if (input) {
+        input.removeAttribute('readonly')
+        input.value = '01/01/1985'
+        input.dispatchEvent(new Event('change', { bubbles: true }))
+      }
+    })
+    await page.selectOption('#selectPais', argentinaValue)
     await page.fill('#idCorreo1', 'test@turnos.test')
     await page.fill('#idCorreo2', 'test@turnos.test')
     await page.fill('#idTelefono', '912345678')
@@ -92,6 +110,24 @@ export async function checkDisponibilidadExtranjero(): Promise<SlotResult> {
     const currentUrl = page.url()
     if (!currentUrl.includes('oficina.srcei')) {
       return { disponible: false, mensaje: `Formulario rechazado — redirigido a ${currentUrl}` }
+    }
+
+    // Detect "alta demanda" (server overload) — retry up to 3 times
+    for (let intento = 1; intento <= 3; intento++) {
+      const bodyText = await page.evaluate(() => document.body?.innerText || '')
+      if (/alta demanda|intente nuevamente/i.test(bodyText)) {
+        if (intento === 3) {
+          return { disponible: false, mensaje: 'SRCEI con alta demanda — reintentar más tarde' }
+        }
+        console.log(`[Scraper] Alta demanda detectada, reintento ${intento}/3...`)
+        await page.waitForTimeout(5000)
+        const retryNav = page.waitForNavigation({ waitUntil: 'domcontentloaded', timeout: 15000 }).catch(() => null)
+        await page.evaluate(() => (document.getElementById('btn_error_aceptar') as HTMLButtonElement | null)?.click())
+        await retryNav
+        await page.waitForTimeout(3000)
+      } else {
+        break
+      }
     }
 
     return await detectarSlots(page)
